@@ -1,6 +1,6 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import { accountModel } from './models/accountModel';
+import { accountRouter } from './routes/accountRouter.js';
 
 /**
  *  ✓1. Criar DB no mongoDB Atlas
@@ -25,7 +25,7 @@ mongoose
 
 const app = express();
 app.use(express.json());
-app.use('/account', accountModel);
+app.use('/accounts', accountRouter);
 
 app.listen(8080, () => {
   console.log('API started');

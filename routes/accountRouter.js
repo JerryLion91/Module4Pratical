@@ -1,19 +1,9 @@
 import express from 'express';
-import { accountModel } from '../models/accountModel';
+import { accountModel } from '../models/accountModel.js';
 
 const router = express.Router();
-/**
- *  4. endpoint para deposito
- *  5. endpoint para saque
- *  6. endpoint para consulta
- *  7. endpoint para exlusao da conta
- *  8. endpoint para tranferencias
- *  9. endpoint para consultar media do saldo
- * 10. endpoint para colsultar menor saldo
- * 11. endpoint para consulta os client mais ricos
- * 12. endpoint com agencia private
- */
 
+// Not for use
 router.post('/', async (req, res, next) => {
   try {
     const newStudent = new accountModel(req.body);
@@ -31,9 +21,33 @@ deverá atualizar o “balance” da conta, incrementando-o com o valor recebido
 parâmetro. O endpoint deverá validar se a conta informada existe, caso não exista
 deverá retornar um erro, caso exista retornar o saldo atual da conta 
 */
-router.put(async (req, res, next) => {
+router.put('/deposit', async (req, res, next) => {
+  //..agencia, numero da conta, valor de deposito
   try {
-    //..
+    const { agencia, conta, value } = req.body;
+    if (!agencia || !conta || value == null) {
+      throw new Error('Dados insuficientes para o deposito.');
+    }
+    const dataAccount = await accountModel.findOne({
+      agencia: agencia,
+      conta: conta,
+    });
+    if (dataAccount) {
+      const updatedBalance = {
+        balance: dataAccount.balance + value,
+      };
+      const updatedAccount = await accountModel.findOneAndUpdate(
+        {
+          agencia,
+          conta,
+        },
+        updatedBalance,
+        { new: true }
+      );
+      const { name, balance } = updatedAccount;
+      res.send({ agencia, conta, name, balance });
+    }
+    throw new Error('Conta nao encontrada.');
   } catch (err) {
     next(err);
   }
@@ -49,9 +63,37 @@ o saldo atual da conta. Também deverá validar se a conta possui saldo suficien
 para aquele saque, se não tiver deverá retornar um erro, não permitindo assim que
 o saque fique negativo.
  */
-router.put(async (req, res, next) => {
+router.put('/withdraw', async (req, res, next) => {
   try {
-    //..
+    //..agencia, numero da conta, valor do saque
+    const { agencia, conta, value } = req.body;
+    if (!agencia || !conta || value == null) {
+      throw new Error('Dados insuficientes para o saque.');
+    }
+    const dataAccount = await accountModel.findOne({
+      agencia: agencia,
+      conta: conta,
+    });
+    if (dataAccount) {
+      if (dataAccount.balance < value + 1) {
+        throw new Error('Saldo insuficiente para o saque.');
+      }
+
+      const updatedBalance = {
+        balance: dataAccount.balance - (value + 1),
+      };
+      const updatedAccount = await accountModel.findOneAndUpdate(
+        {
+          agencia,
+          conta,
+        },
+        updatedBalance,
+        { new: true }
+      );
+      const { name, balance } = updatedAccount;
+      res.send({ agencia, conta, name, balance });
+    }
+    throw new Error('Conta nao encontrada.');
   } catch (err) {
     next(err);
   }
@@ -63,9 +105,22 @@ como parâmetro a “agência” e o número da conta, e deverá retornar seu �
 Caso a conta informada não exista, retornar um erro.
 
  */
-router.get(async (req, res, next) => {
+router.get('/', async (req, res, next) => {
+  //..agencia, numero da conta
   try {
-    //..
+    const { agencia, conta } = req.query;
+    if (!agencia || !conta) {
+      throw new Error('Dados insuficientes para a consulta.');
+    }
+    const dataAccount = await accountModel.findOne({
+      agencia: agencia,
+      conta: conta,
+    });
+    if (dataAccount) {
+      const { name, balance } = dataAccount;
+      res.send({ agencia, conta, name, balance });
+    }
+    throw new Error('Conta nao encontrada.');
   } catch (err) {
     next(err);
   }
@@ -76,9 +131,20 @@ router.get(async (req, res, next) => {
 parâmetro a “agência” e o número da conta e retornar o número de contas ativas
 para esta agência.
  */
-router.delete(async (req, res, next) => {
+router.delete('/delete', async (req, res, next) => {
+  //..agencia, conta
   try {
-    //..
+    const { agencia, conta } = req.query;
+    const result = await accountModel.findOneAndDelete({
+      agencia,
+      conta,
+    });
+    if (result) {
+      const dataAccounts = await accountModel.find({ agencia: agencia });
+      const numAccounts = dataAccounts.length;
+      res.send({ agencia, numAccounts }); //return num de contas ativas na agencia
+    }
+    throw new Error('Conta nao encontrada.');
   } catch (err) {
     next(err);
   }
@@ -93,9 +159,47 @@ de transferência (8) deve ser debitado na conta origem. O endpoint deverá reto
 o saldo da conta origem.
 
  */
-router.put(async (req, res, next) => {
+router.put('/transfer', async (req, res, next) => {
+  // query origem
+  // body destino
   try {
-    //..
+    const transferFee = 8;
+    const { agencia: origAgencia, conta: origConta } = req.query;
+    const { agencia: destAgencia, conta: destConta, value } = req.body;
+    const origAccount = await accountModel.findOne({
+      agencia: origAgencia,
+      conta: origConta,
+    });
+    console.log(origAccount);
+    if (origAccount) {
+      const { _id: origId, name, balance: origBalance } = origAccount;
+      console.log(origBalance);
+      console.log(value + transferFee);
+      if (origBalance > value + transferFee) {
+        const destAccount = await accountModel.findOne({
+          agencia: destAgencia,
+          conta: destConta,
+        });
+        const { _id: destId, balance: destBalance } = destAccount;
+        await accountModel.findOneAndUpdate(
+          { _id: destId },
+          {
+            balance: destBalance + value,
+          }
+        );
+        const updatedAccount = await accountModel.findOneAndUpdate(
+          { _id: origId },
+          {
+            balance: origBalance - (value + transferFee),
+          },
+          { new: true }
+        );
+
+        res.send(updatedAccount);
+      }
+      throw new Error('Saldo insuficiente para tranferencia.');
+    }
+    throw new Error('Conta de origem nao encontrada.');
   } catch (err) {
     next(err);
   }
@@ -107,9 +211,13 @@ agência. O endpoint deverá receber como parâmetro a “agência” e deverá 
 o balance médio da conta.
 
  */
-router.get(async (req, res, next) => {
+router.get('/average', async (req, res, next) => {
   try {
-    //..
+    const { agencia } = req.query;
+    if (!agencia) {
+      throw new Error('Dados insuficientes para a consulta.');
+    }
+    res.send({ agencia });
   } catch (err) {
     next(err);
   }
@@ -121,9 +229,13 @@ deverá receber como parâmetro um valor numérico para determinar a quantidade 
 clientes a serem listados, e o endpoint deverá retornar em ordem crescente pelo
 saldo a lista dos clientes (agência, conta, saldo).
  */
-router.get(async (req, res, next) => {
+router.get('/poorer', async (req, res, next) => {
   try {
-    //..
+    const { limit } = req.query;
+    if (!limit) {
+      throw new Error('Dados insuficientes para a consulta.');
+    }
+    res.send({ limit });
   } catch (err) {
     next(err);
   }
@@ -135,9 +247,13 @@ receber como parâmetro um valor numérico para determinar a quantidade de clien
 a serem listados, e o endpoint deverá retornar em ordem decrescente pelo saldo,
 crescente pelo nome, a lista dos clientes (agência, conta, nome e saldo).
  */
-router.get(async (req, res, next) => {
+router.get('/richer', async (req, res, next) => {
   try {
-    //..
+    const { limit } = req.query;
+    if (!limit) {
+      throw new Error('Dados insuficientes para a consulta.');
+    }
+    res.send({ limit });
   } catch (err) {
     next(err);
   }
@@ -148,14 +264,17 @@ router.get(async (req, res, next) => {
 agência para a agência private agencia=99. O endpoint deverá retornar a lista dos
 clientes da agencia private
  */
-router.put(async (req, res, next) => {
+router.put('/upgradePrivate', async (req, res, next) => {
   try {
-    //..
+    res.send('hi');
   } catch (err) {
     next(err);
   }
 });
 
 router.use((err, req, res, next) => {
+  console.log(err);
   res.status(500).send(`Ocorreu o erro: ${err}`);
 });
+
+export { router as accountRouter };
