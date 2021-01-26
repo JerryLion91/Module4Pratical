@@ -28,26 +28,20 @@ router.put('/deposit', async (req, res, next) => {
     if (!agencia || !conta || value == null) {
       throw new Error('Dados insuficientes para o deposito.');
     }
-    const dataAccount = await accountModel.findOne({
-      agencia: agencia,
-      conta: conta,
-    });
-    if (dataAccount) {
-      const updatedBalance = {
-        balance: dataAccount.balance + value,
-      };
-      const updatedAccount = await accountModel.findOneAndUpdate(
-        {
-          agencia,
-          conta,
-        },
-        updatedBalance,
-        { new: true }
-      );
+    const updatedAccount = await accountModel.findOneAndUpdate(
+      {
+        agencia,
+        conta,
+      },
+      { $inc: { balance: value } },
+      { new: true, useFindAndModify: false }
+    );
+    if (updatedAccount) {
       const { name, balance } = updatedAccount;
       res.send({ agencia, conta, name, balance });
+    } else {
+      throw new Error('Conta nao encontrada.');
     }
-    throw new Error('Conta nao encontrada.');
   } catch (err) {
     next(err);
   }
@@ -75,7 +69,7 @@ router.put('/withdraw', async (req, res, next) => {
       conta: conta,
     });
     if (dataAccount) {
-      if (dataAccount.balance < value + 1) {
+      if (dataAccount.balance <= value + 1) {
         throw new Error('Saldo insuficiente para o saque.');
       }
 
@@ -92,8 +86,9 @@ router.put('/withdraw', async (req, res, next) => {
       );
       const { name, balance } = updatedAccount;
       res.send({ agencia, conta, name, balance });
+    } else {
+      throw new Error('Conta nao encontrada.');
     }
-    throw new Error('Conta nao encontrada.');
   } catch (err) {
     next(err);
   }
@@ -119,8 +114,9 @@ router.get('/', async (req, res, next) => {
     if (dataAccount) {
       const { name, balance } = dataAccount;
       res.send({ agencia, conta, name, balance });
+    } else {
+      throw new Error('Conta nao encontrada.');
     }
-    throw new Error('Conta nao encontrada.');
   } catch (err) {
     next(err);
   }
@@ -143,8 +139,9 @@ router.delete('/delete', async (req, res, next) => {
       const dataAccounts = await accountModel.find({ agencia: agencia });
       const numAccounts = dataAccounts.length;
       res.send({ agencia, numAccounts }); //return num de contas ativas na agencia
+    } else {
+      throw new Error('Conta nao encontrada.');
     }
-    throw new Error('Conta nao encontrada.');
   } catch (err) {
     next(err);
   }
@@ -172,10 +169,8 @@ router.put('/transfer', async (req, res, next) => {
     });
     console.log(origAccount);
     if (origAccount) {
-      const { _id: origId, name, balance: origBalance } = origAccount;
-      console.log(origBalance);
-      console.log(value + transferFee);
-      if (origBalance > value + transferFee) {
+      const { _id: origId, balance: origBalance } = origAccount;
+      if (origBalance >= value + transferFee) {
         const destAccount = await accountModel.findOne({
           agencia: destAgencia,
           conta: destConta,
@@ -196,8 +191,9 @@ router.put('/transfer', async (req, res, next) => {
         );
 
         res.send(updatedAccount);
+      } else {
+        throw new Error('Saldo insuficiente para tranferencia.');
       }
-      throw new Error('Saldo insuficiente para tranferencia.');
     }
     throw new Error('Conta de origem nao encontrada.');
   } catch (err) {
@@ -209,15 +205,24 @@ router.put('/transfer', async (req, res, next) => {
  * 9. Crie um endpoint para consultar a média do saldo dos clientes de determinada
 agência. O endpoint deverá receber como parâmetro a “agência” e deverá retornar
 o balance médio da conta.
-
  */
 router.get('/average', async (req, res, next) => {
   try {
     const { agencia } = req.query;
+    console.log(agencia);
     if (!agencia) {
       throw new Error('Dados insuficientes para a consulta.');
     }
-    res.send({ agencia });
+    const accountsByAgencia = await accountModel.aggregate([
+      { $match: { agencia: parseInt(agencia, 10) } },
+      { $group: { _id: '$agencia', media: { $avg: '$balance' } } },
+    ]);
+    if (accountsByAgencia.length > 0) {
+      const { _id, media } = accountsByAgencia[0];
+      res.send({ agencia: _id, media });
+    } else {
+      throw new Error('Agencia nao encontrada.');
+    }
   } catch (err) {
     next(err);
   }
@@ -235,7 +240,12 @@ router.get('/poorer', async (req, res, next) => {
     if (!limit) {
       throw new Error('Dados insuficientes para a consulta.');
     }
-    res.send({ limit });
+    const poorerClients = await accountModel.aggregate([
+      { $project: { _id: 0, agencia: 1, conta: 1, balance: 1 } },
+      { $sort: { balance: 1 } },
+      { $limit: parseInt(limit, 10) },
+    ]);
+    res.send(poorerClients);
   } catch (err) {
     next(err);
   }
@@ -253,7 +263,12 @@ router.get('/richer', async (req, res, next) => {
     if (!limit) {
       throw new Error('Dados insuficientes para a consulta.');
     }
-    res.send({ limit });
+    const richerClients = await accountModel.aggregate([
+      { $project: { _id: 0, agencia: 1, conta: 1, balance: 1, name: 1 } },
+      { $sort: { balance: -1 } },
+      { $limit: parseInt(limit, 10) },
+    ]);
+    res.send(richerClients);
   } catch (err) {
     next(err);
   }
@@ -266,7 +281,27 @@ clientes da agencia private
  */
 router.put('/upgradePrivate', async (req, res, next) => {
   try {
-    res.send('hi');
+    const agencies = await accountModel.distinct('agencia');
+
+    const richerClients = await Promise.all(
+      agencies.map(async (agenciaFilter) => {
+        const richerClient = await accountModel.aggregate([
+          { $match: { agencia: agenciaFilter } },
+          { $sort: { balance: -1 } },
+          { $limit: 1 },
+        ]);
+        const { _id } = richerClient[0];
+        const updatedClient = await accountModel.findOneAndUpdate(
+          { _id: _id },
+          { $set: { agencia: 99 } },
+          { new: true }
+        );
+        return { updatedClient };
+      })
+    );
+
+    console.log(agencies);
+    res.send(richerClients);
   } catch (err) {
     next(err);
   }
